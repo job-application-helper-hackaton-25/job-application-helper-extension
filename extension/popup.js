@@ -1,27 +1,10 @@
-const apiUrlInput = document.getElementById('apiUrl');
-const saveBtn = document.getElementById('save');
 const importBtn = document.getElementById('import');
 const statusEl = document.getElementById('status');
-const payloadEl = document.getElementById('payload');
-
-const DEFAULT_API = '';
 
 function setStatus(msg, isError) {
   statusEl.textContent = msg;
   statusEl.style.color = isError ? 'crimson' : 'green';
 }
-
-// load saved API URL
-chrome.storage.local.get({jobOfferApiUrl: DEFAULT_API}, (items) => {
-  apiUrlInput.value = items.jobOfferApiUrl || '';
-});
-
-saveBtn.addEventListener('click', () => {
-  const url = apiUrlInput.value.trim();
-  chrome.storage.local.set({jobOfferApiUrl: url}, () => {
-    setStatus('Saved API URL.');
-  });
-});
 
 importBtn.addEventListener('click', async () => {
   setStatus('Extracting job details...', false);
@@ -118,21 +101,10 @@ function handleExtractionResponse(response) {
   setStatus('Sending to API...', false);
   // send to background to perform fetch (or log if API not configured)
   chrome.runtime.sendMessage({type: 'sendToApi', offer: response.offer}, (res) => {
-    payloadEl.style.display = 'none';
-    payloadEl.textContent = '';
     if (res && res.ok) {
       setStatus('Imported successfully.');
-      if (res.payload) {
-        // show the payload JSON for inspection
-        payloadEl.style.display = 'block';
-        payloadEl.textContent = JSON.stringify(res.payload, null, 2);
-      }
     } else {
       setStatus('Failed to import: ' + (res && res.error ? res.error : 'unknown'), true);
-      if (res && res.payload) {
-        payloadEl.style.display = 'block';
-        payloadEl.textContent = JSON.stringify(res.payload, null, 2);
-      }
     }
   });
 }

@@ -91,15 +91,89 @@ function parseJsonLdJobPosting() {
           description: it.description || null,
           url: it.url || it.mainEntityOfPage || null,
         };
-        if (it.hiringOrganization) job.company = it.hiringOrganization.name || null;
+        
+        // Company info
+        if (it.hiringOrganization) {
+          job.company = it.hiringOrganization.name || null;
+          if (it.hiringOrganization.logo) job.logo = it.hiringOrganization.logo;
+          if (it.hiringOrganization.sameAs) job.companyUrl = it.hiringOrganization.sameAs;
+        }
+        
+        // Location
         if (it.jobLocation) {
           const loc = it.jobLocation.address || (Array.isArray(it.jobLocation) && it.jobLocation[0]?.address);
-          if (loc) job.location = loc.addressLocality || loc.addressRegion || loc.streetAddress || null;
+          if (loc) {
+            job.location = loc.addressLocality || loc.addressRegion || loc.streetAddress || null;
+            if (loc.addressCountry) job.country = loc.addressCountry;
+          }
         }
+        
+        // Salary - parse structured data
         if (it.baseSalary) {
-          if (typeof it.baseSalary === 'object') job.salary = (it.baseSalary.value && (it.baseSalary.value.value || it.baseSalary.value)) || null;
-          else job.salary = it.baseSalary;
+          if (typeof it.baseSalary === 'object') {
+            const salary = it.baseSalary;
+            const value = salary.value;
+            
+            if (value && typeof value === 'object') {
+              const min = value.minValue;
+              const max = value.maxValue;
+              const unit = value.unitText || value.unit;
+              const currency = salary.currency;
+              
+              // Build salary string
+              if (min !== undefined || max !== undefined) {
+                const parts = [];
+                if (min !== undefined && max !== undefined) {
+                  parts.push(`${min} - ${max}`);
+                } else if (min !== undefined) {
+                  parts.push(`${min}`);
+                } else if (max !== undefined) {
+                  parts.push(`${max}`);
+                }
+                if (currency) parts.push(currency);
+                if (unit) parts.push(`/ ${unit.toLowerCase()}`);
+                job.salary = parts.join(' ');
+                
+                // Store parsed salary data
+                job.salaryParsed = {
+                  raw: job.salary,
+                  min: min !== undefined ? parseFloat(min) : null,
+                  max: max !== undefined ? parseFloat(max) : null,
+                  currency: currency || null,
+                  period: unit || null,
+                  contract: null
+                };
+              }
+            } else {
+              job.salary = String(salary.value || salary);
+            }
+          } else {
+            job.salary = it.baseSalary;
+          }
         }
+        
+        // Dates
+        if (it.datePosted) job.publishedDate = it.datePosted;
+        if (it.validThrough) job.expirationDate = it.validThrough;
+        
+        // Employment type
+        if (it.employmentType) job.employmentType = it.employmentType;
+        
+        // Job location type (remote, hybrid, office)
+        if (it.jobLocationType) {
+          const locType = String(it.jobLocationType).toUpperCase();
+          if (locType === 'TELECOMMUTE') job.workType = 'remote';
+          else job.workType = it.jobLocationType.toLowerCase();
+        }
+        
+        // Applicant location requirements
+        if (it.applicantLocationRequirements) {
+          const req = Array.isArray(it.applicantLocationRequirements) 
+            ? it.applicantLocationRequirements[0] 
+            : it.applicantLocationRequirements;
+          if (req && req.name) job.applicantCountry = req.name;
+        }
+        
         return job;
       }
     } catch (e) {

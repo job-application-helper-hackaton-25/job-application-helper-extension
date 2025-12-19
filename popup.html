@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Import Job Offer</title>
+    <style>
+      body{font-family: Arial, sans-serif;min-width:280px;padding:12px}
+      label,input{display:block;width:100%;margin-bottom:8px}
+      button{width:100%;padding:8px}
+      #status{margin-top:8px;font-size:13px}
+    </style>
+  </head>
+  <body>
+    <h3>Job Offer Importer</h3>
+    <label>JobOffer API URL</label>
+    <input id="apiUrl" placeholder="https://joboffer.example/api/offers" />
+    <button id="save">Save URL</button>
+    <hr />
+    <button id="import">Import job from this page</button>
+    <div id="status"></div>
+    <pre id="payload" style="white-space:pre-wrap;max-height:240px;overflow:auto;border:1px solid #ddd;padding:8px;margin-top:8px;display:none"></pre>
+    <script src="popup.js"></script>
+  </body>
+</html>

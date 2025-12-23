@@ -3,9 +3,19 @@
   "name": "Job Offer Importer",
   "version": "0.1.0",
   "description": "Import job offer details from pages and send them to JobOffer API.",
+  "icons": {
+    "16": "job-offer_icon.png",
+    "48": "job-offer_icon.png",
+    "128": "job-offer_icon.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Import Job Offer"
+    "default_title": "Import Job Offer",
+    "default_icon": {
+      "16": "job-offer_icon.png",
+      "48": "job-offer_icon.png",
+      "128": "job-offer_icon.png"
+    }
   },
   "permissions": [
     "storage",

@@ -87,15 +87,15 @@ function parseJsonLdJobPosting() {
         if (!type || !String(type).toLowerCase().includes('jobposting')) continue;
 
         const job = {
-          title: it.title || it.name || null,
+          position: it.title || it.name || null,
           description: it.description || null,
-          url: it.url || it.mainEntityOfPage || null,
+          linkToTheOffer: it.url || it.mainEntityOfPage || null,
         };
         
         // Company info
         if (it.hiringOrganization) {
-          job.company = it.hiringOrganization.name || null;
-          if (it.hiringOrganization.logo) job.logo = it.hiringOrganization.logo;
+          job.companyName = it.hiringOrganization.name || null;
+          if (it.hiringOrganization.logo) job.companyImage = it.hiringOrganization.logo;
           if (it.hiringOrganization.sameAs) job.companyUrl = it.hiringOrganization.sameAs;
         }
         
@@ -153,7 +153,7 @@ function parseJsonLdJobPosting() {
         }
         
         // Dates
-        if (it.datePosted) job.publishedDate = it.datePosted;
+        if (it.datePosted) job.publishDate = it.datePosted;
         if (it.validThrough) job.expirationDate = it.validThrough;
         
         // Employment type
@@ -162,8 +162,8 @@ function parseJsonLdJobPosting() {
         // Job location type (remote, hybrid, office)
         if (it.jobLocationType) {
           const locType = String(it.jobLocationType).toUpperCase();
-          if (locType === 'TELECOMMUTE') job.workType = 'remote';
-          else job.workType = it.jobLocationType.toLowerCase();
+          if (locType === 'TELECOMMUTE') job.jobType = 'remote';
+          else job.jobType = it.jobLocationType.toLowerCase();
         }
         
         // Applicant location requirements
@@ -192,7 +192,7 @@ async function fetchCompanyDetails(companyUrl) {
     const details = {};
 
     const nameEl = doc.querySelector('h1') || doc.querySelector('.org-top-card-summary__title');
-    if (nameEl?.textContent) details.company = normalize(nameEl.textContent);
+    if (nameEl?.textContent) details.companyName = normalize(nameEl.textContent);
 
     for (const sel of [
       '.org-top-card__description',
@@ -303,6 +303,11 @@ const SELECTORS = {
       '[data-cy="location_pin"] > span:first-child'
     ],
     description: [
+      '#posting-description nfj-read-more > div',
+      'section[data-cy-section="JobOffer_Project"] nfj-read-more > div',
+      '#posting-description',
+      'section[id*="description"] nfj-read-more',
+      'common-posting-description nfj-read-more > div',
       'common-posting-description',
       '.offer-description',
       '.offer__description'
@@ -314,21 +319,39 @@ const SELECTORS = {
   },
 
   justjoinit: {
-    title: ['h1.posting-title', 'h1.zui-heading'],
+    title: [
+      'h1[data-test-id="offer-title"]',
+      'h2[data-test-id="offer-title"]',
+      'div[class*="MuiTypography"][class*="h2"]',
+      'h1.posting-title',
+      'h1.zui-heading',
+      'h1',
+      'h2'
+    ],
     company: [
+      'a[data-test-id="anchor"]',
       'a[href*="/company/"]',
+      'div[class*="CompanyLogo"] + div a',
       '.company-name'
     ],
     location: [
+      'div[data-test-id="offer-location"]',
+      'span[class*="css-"] svg[data-test-id="PlaceOutlinedIcon"] ~ span',
       '.location',
       '.post__location'
     ],
     description: [
+      'div[data-test-id="offer-description"]',
+      'div[class*="OfferViewDescription"]',
       '.description__content',
       '.post__description',
       '.description'
     ],
-    salary: ['.salary']
+    salary: [
+      'span[data-test-id="offer-salary"]',
+      'div[class*="OfferSalary"]',
+      '.salary'
+    ]
   }
 };
 
@@ -337,14 +360,14 @@ function extractBySite(site) {
   if (!selectors) return {};
   
   return {
-    title: textFromSelectors(selectors.title) || null,
-    company: textFromSelectors(selectors.company) || null,
+    position: textFromSelectors(selectors.title) || null,
+    companyName: textFromSelectors(selectors.company) || null,
     location: textFromSelectors(selectors.location) || null,
     description: textFromSelectors(selectors.description) || null,
     salary: textFromSelectors(selectors.salary) || null,
-    publishedDate: selectors.publishedDate ? textFromSelectors(selectors.publishedDate) : null,
-    logo: selectors.logo ? textFromSelectors(selectors.logo) : null,
-    workType: selectors.workType ? textFromSelectors(selectors.workType) : null
+    publishDate: selectors.publishedDate ? textFromSelectors(selectors.publishedDate) : null,
+    companyImage: selectors.logo ? textFromSelectors(selectors.logo) : null,
+    jobType: selectors.workType ? textFromSelectors(selectors.workType) : null
   };
 }
 
@@ -378,7 +401,7 @@ function extractCompanyInfoFromJobPage() {
   }
 
   const nameEl = box.querySelector('.artdeco-entity-lockup__title a') || box.querySelector('.artdeco-entity-lockup__title');
-  if (nameEl) result.company = (nameEl.textContent || '').trim();
+  if (nameEl) result.companyName = (nameEl.textContent || '').trim();
 
   const descEl =
     box.querySelector('.jobs-company__company-description') ||
@@ -478,22 +501,64 @@ function extractPublishedDate() {
   ]);
 }
 
+// ---------- SPA detection and waiting ----------
+async function waitForContent(selectors, maxWait = 5000) {
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWait) {
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el && el.textContent.trim().length > 0) {
+        console.log(`Found content with selector: ${selector}`);
+        return true;
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  console.warn('Timeout waiting for content');
+  return false;
+}
+
 // ---------- main pipeline ----------
 async function extractJobOffer() {
-  const offer = { url: location.href };
+  // Skip if running in an iframe (e.g., GTM, ads)
+  if (window !== window.top) {
+    console.log('Skipping extraction - running in iframe');
+    return null;
+  }
+  
+  const offer = { linkToTheOffer: location.href };
+  
+  // Wait for SPA content to load (JustJoinIT, etc.)
+  const host = location.hostname || '';
+  if (host.includes('justjoin')) {
+    console.log('JustJoinIT detected, waiting for content to load...');
+    const contentFound = await waitForContent([
+      'h1[data-test-id="offer-title"]',
+      'h2[data-test-id="offer-title"]',
+      'div[data-test-id="offer-description"]',
+      'h1',
+      'h2'
+    ], 8000);
+    
+    if (!contentFound) {
+      console.warn('JustJoinIT content not loaded in time');
+      return null;
+    }
+    console.log('Content loaded, proceeding with extraction');
+  }
 
   const jsonLd = parseJsonLdJobPosting();
   if (jsonLd) {
     Object.assign(offer, jsonLd);
-    offer.url = offer.url || location.href;
+    offer.linkToTheOffer = offer.linkToTheOffer || location.href;
     
     // Apply derived fields even when using JSON-LD
     offer.description = normalize(offer.description);
-    offer.workType = offer.workType || deriveWorkType(offer.description, offer.companyDescription);
-    offer.contractType = offer.contractType || deriveContractType(offer.description);
+    offer.jobType = offer.jobType || deriveWorkType(offer.description, offer.companyDescription);
+    offer.agreementType = offer.agreementType || deriveContractType(offer.description);
     offer.source = detectSource(location.hostname || '');
-    offer.logo = offer.logo || extractLogo();
-    offer.publishedDate = offer.publishedDate || extractPublishedDate();
+    offer.companyImage = offer.companyImage || extractLogo();
+    offer.publishDate = offer.publishDate || extractPublishedDate();
     // Fallback: infer salary from description when missing (e.g., LinkedIn)
     if (!offer.salary && offer.description) {
       const m = offer.description.match(/(\d[\d\s.,]+)\s*[–\-—]\s*(\d[\d\s.,]+)\s*(PLN|zł|EUR|USD|GBP)\b[^\n]*?(miesi[eę]cznie|rocznie|per year|month|year|hour)?/i);
@@ -507,34 +572,34 @@ async function extractJobOffer() {
       try { offer.salaryParsed = parseSalary(offer.salary); } catch (e) { console.warn('salary parse failed', e); }
     }
     
-    console.log('extractJobOffer: final offer (from JSON-LD)', offer);
-    return offer;
+    console.log('extractJobOffer: raw offer (from JSON-LD)', offer);
+    // Continue to backend mapping instead of returning early
+  } else {
+    // Fallback: extract from meta tags and selectors
+    offer.position = getMeta(['og:title', 'twitter:title']) || textFromSelectors(['h1.job-title', 'h1[class*=title]', 'h1']) || document.title || null;
+    offer.companyName = getMeta(['og:site_name', 'company', 'employer']) || textFromSelectors(['.company', '.companyName', '.employer', '.job-company', '.topcard__org-name-link']) || null;
+    offer.location = textFromSelectors(['.location', '.job-location', '.topcard__flavor--bullet']) || getMeta(['location']) || null;
+    offer.salary = textFromSelectors(['.salary', '.compensation', '.pay']) || null;
+    offer.description = getMeta(['og:description', 'twitter:description', 'description']) ||
+      textFromSelectors(['.description', '.job-description', '#job-description', '.job-posting__description', '.listing-summary', '.jd']) || null;
   }
 
-  offer.title = getMeta(['og:title', 'twitter:title']) || textFromSelectors(['h1.job-title', 'h1[class*=title]', 'h1']) || document.title || null;
-  offer.company = getMeta(['og:site_name', 'company', 'employer']) || textFromSelectors(['.company', '.companyName', '.employer', '.job-company', '.topcard__org-name-link']) || null;
-  offer.location = textFromSelectors(['.location', '.job-location', '.topcard__flavor--bullet']) || getMeta(['location']) || null;
-  offer.salary = textFromSelectors(['.salary', '.compensation', '.pay']) || null;
-  offer.description = getMeta(['og:description', 'twitter:description', 'description']) ||
-    textFromSelectors(['.description', '.job-description', '#job-description', '.job-posting__description', '.listing-summary', '.jd']) || null;
-
-  const host = location.hostname || '';
   try {
     if (host.includes('linkedin.com')) {
       const s = extractBySite('linkedin');
-      offer.title = offer.title || s.title || null;
-      offer.company = offer.company || s.company || null;
+      offer.position = offer.position || s.position || null;
+      offer.companyName = offer.companyName || s.companyName || null;
       offer.location = offer.location || s.location || null;
       offer.description = offer.description || s.description || null;
       offer.salary = offer.salary || s.salary || null;
-      offer.publishedDate = offer.publishedDate || s.publishedDate || null;
-      offer.logo = offer.logo || s.logo || null;
+      offer.publishDate = offer.publishDate || s.publishedDate || null;
+      offer.companyImage = offer.companyImage || s.companyImage || null;
 
       try {
         const pageInfo = extractCompanyInfoFromJobPage();
         if (pageInfo.industry) offer.industry = offer.industry || pageInfo.industry;
         if (pageInfo.size) offer.companySize = offer.companySize || pageInfo.size;
-        if (pageInfo.company) offer.company = offer.company || pageInfo.company;
+        if (pageInfo.companyName) offer.companyName = offer.companyName || pageInfo.companyName;
         if (pageInfo.companyDescription) offer.companyDescription = offer.companyDescription || pageInfo.companyDescription;
       } catch (e) {
         console.warn('extractJobOffer: error parsing company info from job page', e);
@@ -544,10 +609,10 @@ async function extractJobOffer() {
         const compAnchor = document.querySelector('a[href*="/company/"]') || document.querySelector('[data-test-company-name] a');
         if (compAnchor?.href) {
           const companyUrl = compAnchor.href.split('?')[0];
-          const missingCompanyInfo = !offer.company || !offer.description || !offer.industry || !offer.companySize;
+          const missingCompanyInfo = !offer.companyName || !offer.description || !offer.industry || !offer.companySize;
           if (missingCompanyInfo) {
             const details = await fetchCompanyDetails(companyUrl);
-            if (details.company) offer.company = offer.company || details.company;
+            if (details.companyName) offer.companyName = offer.companyName || details.companyName;
             if (details.companyDescription) offer.companyDescription = offer.companyDescription || details.companyDescription;
             if (details.industry) offer.industry = offer.industry || details.industry;
             if (details.size) offer.companySize = offer.companySize || details.size;
@@ -558,16 +623,17 @@ async function extractJobOffer() {
       }
     } else if (host.includes('nofluffjobs') || host.includes('nofluff')) {
       const s = extractBySite('nofluffjobs');
-      offer.title = offer.title || s.title || null;
-      offer.company = offer.company || s.company || null;
+      offer.position = offer.position || s.position || null;
+      offer.companyName = offer.companyName || s.companyName || null;
       offer.location = offer.location || s.location || null;
-      offer.description = offer.description || s.description || null;
+      // Prioritize site-specific description over meta tags (meta tags are often truncated)
+      offer.description = s.description || offer.description || null;
       offer.salary = offer.salary || s.salary || null;
-      offer.workType = offer.workType || s.workType || null;
+      offer.jobType = offer.jobType || s.jobType || null;
     } else if (host.includes('justjoin.it') || host.includes('justjoin')) {
       const s = extractBySite('justjoinit');
-      offer.title = offer.title || s.title || null;
-      offer.company = offer.company || s.company || null;
+      offer.position = offer.position || s.position || null;
+      offer.companyName = offer.companyName || s.companyName || null;
       offer.location = offer.location || s.location || null;
       offer.description = offer.description || s.description || null;
       offer.salary = offer.salary || s.salary || null;
@@ -578,7 +644,7 @@ async function extractJobOffer() {
 
   try {
     const pageInfo = extractCompanyInfoFromJobPage();
-    if (pageInfo.company) offer.company = offer.company || pageInfo.company;
+    if (pageInfo.companyName) offer.companyName = offer.companyName || pageInfo.companyName;
     if (pageInfo.industry) offer.industry = offer.industry || pageInfo.industry;
     if (pageInfo.size) offer.companySize = offer.companySize || pageInfo.size;
     if (pageInfo.companyDescription) offer.companyDescription = offer.companyDescription || pageInfo.companyDescription;
@@ -591,11 +657,11 @@ async function extractJobOffer() {
   // Trim "Show more" marker from company description only
   offer.companyDescription = trimTruncationMarker(offer.companyDescription);
 
-  offer.workType = offer.workType || deriveWorkType(offer.description, offer.companyDescription);
-  offer.contractType = offer.contractType || deriveContractType(offer.description);
+  offer.jobType = offer.jobType || deriveWorkType(offer.description, offer.companyDescription);
+  offer.agreementType = offer.agreementType || deriveContractType(offer.description);
   offer.source = detectSource(host);
-  offer.logo = offer.logo || extractLogo();
-  offer.publishedDate = offer.publishedDate || extractPublishedDate();
+  offer.companyImage = offer.companyImage || extractLogo();
+  offer.publishDate = offer.publishDate || extractPublishedDate();
   // Fallback: infer salary from description when missing (e.g., LinkedIn)
   if (!offer.salary && offer.description) {
     const m = offer.description.match(/(\d[\d\s.,]+)\s*[–\-—]\s*(\d[\d\s.,]+)\s*(PLN|zł|EUR|USD|GBP)\b[^\n]*?(miesi[eę]cznie|rocznie|per year|month|year|hour)?/i);
@@ -609,13 +675,65 @@ async function extractJobOffer() {
     try { offer.salaryParsed = parseSalary(offer.salary); } catch (e) { console.warn('salary parse failed', e); }
   }
   
-  // Map parsed contract type to main contractType field if not already set
-  if (!offer.contractType && offer.salaryParsed?.contract) {
-    offer.contractType = offer.salaryParsed.contract;
+  // Map parsed contract type to main agreementType field if not already set
+  if (!offer.agreementType && offer.salaryParsed?.contract) {
+    offer.agreementType = offer.salaryParsed.contract;
   }
 
-  console.log('extractJobOffer: final offer', offer);
-  return offer;
+  // Format salary if parsed data exists but no string
+  if (!offer.salary && offer.salaryParsed) {
+    const { min, max, currency, period } = offer.salaryParsed;
+    const parts = [];
+    if (min !== null && max !== null) {
+      parts.push(`${min} - ${max}`);
+    } else if (min !== null) {
+      parts.push(`${min}+`);
+    }
+    if (currency) parts.push(currency);
+    if (period) parts.push(`/ ${period}`);
+    offer.salary = parts.join(' ');
+  }
+  
+  // Truncate function to ensure values don't exceed database column limits
+  const truncate = (str, maxLength) => {
+    if (!str) return str;
+    const s = String(str);
+    return s.length > maxLength ? s.substring(0, maxLength) : s;
+  };
+  
+  // Apply defaults for required backend fields
+  offer.companyName = offer.companyName || 'Unknown Company';
+  offer.companyImage = offer.companyImage || '';
+  offer.position = offer.position || 'Untitled Position';
+  offer.description = offer.description || '';
+  offer.jobType = offer.jobType || '';
+  offer.agreementType = offer.agreementType || offer.employmentType || '';
+  offer.salary = offer.salary || '';
+  // Ensure publishDate is just YYYY-MM-DD format (extract date part from ISO timestamp)
+  if (offer.publishDate) {
+    offer.publishDate = offer.publishDate.split('T')[0];
+  } else {
+    offer.publishDate = new Date().toISOString().split('T')[0];
+  }
+  offer.linkToTheOffer = offer.linkToTheOffer || location.href;
+  offer.status = 'FOLLOWING';
+
+  // Return only fields that backend accepts with truncated values to match DB limits
+  const backendOffer = {
+    companyName: truncate(offer.companyName, 255),
+    companyImage: truncate(offer.companyImage, 255),
+    position: truncate(offer.position, 255),
+    description: offer.description, // text field - no limit
+    jobType: truncate(offer.jobType, 100),
+    agreementType: truncate(offer.agreementType, 100),
+    salary: truncate(offer.salary, 100),
+    publishDate: truncate(offer.publishDate, 15),
+    linkToTheOffer: truncate(offer.linkToTheOffer, 700),
+    status: truncate(offer.status, 50)
+  };
+
+  console.log('extractJobOffer: final offer', backendOffer);
+  return backendOffer;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

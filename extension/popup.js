@@ -17,9 +17,12 @@ importBtn.addEventListener('click', async () => {
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: true },
-        func: () => {
+        func: async () => {
           try {
-            if (typeof extractJobOffer === 'function') return extractJobOffer();
+            if (typeof extractJobOffer === 'function') {
+              const result = await extractJobOffer();
+              return result;
+            }
             return null;
           } catch (e) {
             return { __extractError: String(e) };
@@ -44,14 +47,22 @@ importBtn.addEventListener('click', async () => {
         const res = r.result;
         if (!res) continue;
         if (res.__extractError) continue;
-        const url = (res.url||'').toString().toLowerCase();
+        
+        // Skip results with all default/empty values (from iframes with no job data)
+        const hasRealData = res.companyName && res.companyName !== 'Unknown Company' &&
+                           res.position && res.position !== 'Untitled Position' &&
+                           res.description && res.description.length > 10;
+        
+        if (!hasRealData) continue;
+        
+        const url = (res.linkToTheOffer||'').toString().toLowerCase();
         
         // Filter out third-party iframes
         if (blockedDomains.some(domain => url.includes(domain))) continue;
         if (!url || url === 'about:blank') continue;
         
         // Score by populated fields
-        const score = ['title','company','description','location','salary'].reduce((s,k)=> s + (res[k]?1:0), 0);
+        const score = ['position','companyName','description','jobType','salary'].reduce((s,k)=> s + (res[k]?1:0), 0);
         
         // Always prefer main frame (frameId 0) if it has any data
         if (r.frameId === 0 && score > 0) {
